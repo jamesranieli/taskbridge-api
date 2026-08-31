@@ -9,7 +9,7 @@ Schemas define the API contract for project operations, including:
 
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProjectCreateRequest(BaseModel):
@@ -63,9 +63,9 @@ class ProjectResponse(BaseModel):
     created_at: datetime = Field(..., description="UTC timestamp when project was created")
     updated_at: datetime = Field(..., description="UTC timestamp of last modification")
     
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True  # Allow conversion from SQLAlchemy ORM objects
+    model_config = ConfigDict(
+        from_attributes=True  # Allow conversion from SQLAlchemy ORM objects
+    )
 
 
 class PaginatedProjectsResponse(BaseModel):
@@ -76,6 +76,6 @@ class PaginatedProjectsResponse(BaseModel):
     limit: int = Field(..., description="Items per page (used in this request)")
     offset: int = Field(..., description="Items skipped (used in this request)")
     
-    class Config:
-        """Pydantic config for ORM model compatibility."""
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
