@@ -209,8 +209,8 @@ async def update_project_status(
 async def list_projects_by_team(
     tenant_id: Annotated[int, Path(..., gt=0, description="Tenant ID (organization)")],
     team_id: Annotated[int, Path(..., gt=0, description="Team ID (project owner)")],
-    limit: Annotated[int, Query(default=20, ge=1, le=1000, description="Results per page")] = 20,
-    offset: Annotated[int, Query(default=0, ge=0, description="Results to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000, description="Results per page")] = 20,
+    offset: Annotated[int, Query(ge=0, description="Results to skip")] = 0,
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedProjectsResponse:
     """
