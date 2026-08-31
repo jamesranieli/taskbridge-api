@@ -15,7 +15,7 @@ Returns generic not-found/access-denied responses to avoid leaking cross-team in
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status, Query, Path, Depends
+from fastapi import APIRouter, HTTPException, status, Query, Path, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db
@@ -38,6 +38,69 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["projects"])
 
 
+# ==================== INTEGRATION CONTEXT DEPENDENCIES ====================
+
+def _parse_required_positive_header_int(value: str, header_name: str) -> int:
+    """Parse and validate a required positive integer header value."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{header_name} must be a positive integer",
+        )
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{header_name} must be a positive integer",
+        )
+    return parsed
+
+
+def _parse_required_recipient_ids_header(value: str) -> list[int]:
+    """
+    Parse X-Recipient-User-Ids as required comma-separated positive integers
+    with deterministic first-seen-order deduplication.
+    """
+    parts = [part.strip() for part in value.split(",")]
+    if not parts or all(part == "" for part in parts):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="X-Recipient-User-Ids must contain at least one recipient ID",
+        )
+
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for part in parts:
+        if not part:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="X-Recipient-User-Ids must be a comma-separated list of positive integers",
+            )
+        try:
+            recipient_id = int(part)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="X-Recipient-User-Ids must be a comma-separated list of positive integers",
+            )
+        if recipient_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="X-Recipient-User-Ids must contain only positive integers",
+            )
+        if recipient_id not in seen:
+            seen.add(recipient_id)
+            deduped.append(recipient_id)
+
+    if not deduped:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="X-Recipient-User-Ids must contain at least one recipient ID",
+        )
+    return deduped
+
+
 # ==================== ENDPOINTS ====================
 
 @router.post(
@@ -55,6 +118,9 @@ async def create_project(
     tenant_id: Annotated[int, Path(..., gt=0, description="Tenant ID (organization)")],
     team_id: Annotated[int, Path(..., gt=0, description="Team ID (project owner)")],
     request: ProjectCreateRequest,
+    x_organisation_id: Annotated[str, Header(..., alias="X-Organisation-ID")],
+    x_actor_user_id: Annotated[str, Header(..., alias="X-Actor-User-ID")],
+    x_recipient_user_ids: Annotated[str, Header(..., alias="X-Recipient-User-Ids")],
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """
@@ -75,6 +141,14 @@ async def create_project(
     mutations but does not validate team/tenant existence or ownership.
     """
     service = ProjectService(db)
+    org_id = _parse_required_positive_header_int(x_organisation_id, "X-Organisation-ID")
+    if org_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization context does not match tenant_id",
+        )
+    actor_user_id = _parse_required_positive_header_int(x_actor_user_id, "X-Actor-User-ID")
+    recipient_user_ids = _parse_required_recipient_ids_header(x_recipient_user_ids)
     
     try:
         project = await service.create_project(
@@ -82,6 +156,9 @@ async def create_project(
             team_id=team_id,
             name=request.name,
             description=request.description,
+            actor_user_id=actor_user_id,
+            actor_organisation_id=org_id,
+            recipient_user_ids=recipient_user_ids,
         )
         logger.info(
             "Project created via API",
@@ -128,6 +205,9 @@ async def update_project_status(
     team_id: Annotated[int, Path(..., gt=0, description="Team ID (project owner)")],
     project_id: Annotated[int, Path(..., gt=0, description="Project ID")],
     request: ProjectStatusUpdateRequest,
+    x_organisation_id: Annotated[str, Header(..., alias="X-Organisation-ID")],
+    x_actor_user_id: Annotated[str, Header(..., alias="X-Actor-User-ID")],
+    x_recipient_user_ids: Annotated[str, Header(..., alias="X-Recipient-User-Ids")],
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
     """
@@ -151,6 +231,14 @@ async def update_project_status(
     **Note:** Returns 403 (not 404) for not-found/access-denied to avoid leaking team information.
     """
     service = ProjectService(db)
+    org_id = _parse_required_positive_header_int(x_organisation_id, "X-Organisation-ID")
+    if org_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization context does not match tenant_id",
+        )
+    actor_user_id = _parse_required_positive_header_int(x_actor_user_id, "X-Actor-User-ID")
+    recipient_user_ids = _parse_required_recipient_ids_header(x_recipient_user_ids)
     
     try:
         project = await service.update_status(
@@ -158,6 +246,9 @@ async def update_project_status(
             team_id=team_id,
             project_id=project_id,
             new_status=request.status,
+            actor_user_id=actor_user_id,
+            actor_organisation_id=org_id,
+            recipient_user_ids=recipient_user_ids,
         )
         logger.info(
             "Project status updated via API",
@@ -284,6 +375,9 @@ async def delete_project(
     tenant_id: Annotated[int, Path(..., gt=0, description="Tenant ID (organization)")],
     team_id: Annotated[int, Path(..., gt=0, description="Team ID (project owner)")],
     project_id: Annotated[int, Path(..., gt=0, description="Project ID")],
+    x_organisation_id: Annotated[str, Header(..., alias="X-Organisation-ID")],
+    x_actor_user_id: Annotated[str, Header(..., alias="X-Actor-User-ID")],
+    x_recipient_user_ids: Annotated[str, Header(..., alias="X-Recipient-User-Ids")],
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """
@@ -302,12 +396,23 @@ async def delete_project(
     - Returns 403 (not 404) for not-found/access-denied to avoid leaking team information
     """
     service = ProjectService(db)
+    org_id = _parse_required_positive_header_int(x_organisation_id, "X-Organisation-ID")
+    if org_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization context does not match tenant_id",
+        )
+    actor_user_id = _parse_required_positive_header_int(x_actor_user_id, "X-Actor-User-ID")
+    recipient_user_ids = _parse_required_recipient_ids_header(x_recipient_user_ids)
     
     try:
         await service.delete_project(
             tenant_id=tenant_id,
             team_id=team_id,
             project_id=project_id,
+            actor_user_id=actor_user_id,
+            actor_organisation_id=org_id,
+            recipient_user_ids=recipient_user_ids,
         )
         logger.info(
             "Project deleted via API",
