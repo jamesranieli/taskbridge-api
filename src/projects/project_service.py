@@ -16,7 +16,7 @@ Design Principles:
   Relies on tenant_id + team_id filtering to prevent cross-team mutations within tenant.
   NOTE: This does not guarantee team_id belongs to tenant_id—database FK alone cannot
   enforce this without a Team model. See "Limitations" section.
-- No audit logging implementation (marked as TODO for future integration)
+- Project create, status update, and delete integrate immutable audit logging and notification fan-out within the same transaction
 
 Transaction Handling:
 - Service establishes explicit transaction boundaries for mutation operations
@@ -35,6 +35,13 @@ from .project_repository import (
     ProjectRepository,
     ProjectDataError,
     RepositoryError
+)
+from src.notifications.services import (
+    AuditService,
+    NotificationService,
+    AuditCreateServiceError,
+    NotificationCreateServiceError,
+    ValidationServiceError as NotificationAuditValidationServiceError,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,7 +139,11 @@ class ProjectService:
         tenant_id: int,
         team_id: int,
         name: str,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        *,
+        actor_user_id: int,
+        actor_organisation_id: int,
+        recipient_user_ids: list[int],
     ) -> Project:
         """
         Create a new project for a team.
@@ -163,7 +174,7 @@ class ProjectService:
         
         Note:
             - Status is always "active" on creation (immutable)
-            - Audit logging is TODO (future integration with AuditService)
+            - Audit logging and notification fan-out are performed atomically within the same transaction
         """
         # Input validation: name
         if not name or not name.strip():
@@ -187,6 +198,14 @@ class ProjectService:
         # Input validation: team_id
         if team_id <= 0:
             raise ValueError("Invalid team_id: must be positive integer")
+
+        # Integration context validation
+        self._validate_integration_context(
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            actor_organisation_id=actor_organisation_id,
+            recipient_user_ids=recipient_user_ids,
+        )
         
         try:
             # Establish transaction boundary for create operation
@@ -207,12 +226,40 @@ class ProjectService:
                         "name": name_stripped
                     }
                 )
-                
-                # TODO: Call audit_service.log_create() with project details
+
+                # Audit + notifications in same transaction
+                audit_service = AuditService(self.db)
+                notification_service = NotificationService(self.db)
+                created_snapshot = self._serialize_project_snapshot(project)
+
+                await audit_service.create_audit_entry(
+                    tenant_id=tenant_id,
+                    event_type="project_created",
+                    entity_type="project",
+                    entity_id=project.id,
+                    actor_user_id=actor_user_id,
+                    actor_organisation_id=actor_organisation_id,
+                    previous_state=None,
+                    new_state=created_snapshot,
+                )
+
+                await notification_service.create_notifications_for_recipients(
+                    tenant_id=tenant_id,
+                    recipient_user_ids=recipient_user_ids,
+                    event_type="project_created",
+                    project_id=project.id,
+                    message=f"Project '{project.name}' was created.",
+                )
                 
                 return project
         
-        except (ProjectDataError, RepositoryError) as e:
+        except (
+            ProjectDataError,
+            RepositoryError,
+            AuditCreateServiceError,
+            NotificationCreateServiceError,
+            NotificationAuditValidationServiceError,
+        ) as e:
             self.logger.error(
                 "Failed to create project",
                 extra={"team_id": team_id, "name": name_stripped},
@@ -550,7 +597,10 @@ class ProjectService:
         tenant_id: int,
         team_id: int,
         project_id: int,
-        new_status: str
+        new_status: str,
+        actor_user_id: int,
+        actor_organisation_id: int,
+        recipient_user_ids: list[int],
     ) -> Project:
         """
         Update project status with state-transition validation.
@@ -596,6 +646,14 @@ class ProjectService:
             raise InvalidProjectStatusError(
                 f"Invalid status '{new_status}'. Must be one of: {', '.join(sorted(self.VALID_STATUSES))}"
             )
+
+        # Integration context validation
+        self._validate_integration_context(
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            actor_organisation_id=actor_organisation_id,
+            recipient_user_ids=recipient_user_ids,
+        )
         
         try:
             # Establish transaction boundary for update operation
@@ -610,6 +668,7 @@ class ProjectService:
                 
                 # Validate status transition
                 current_status = project.status
+                before_snapshot = self._serialize_project_snapshot(project)
                 allowed_transitions = self.VALID_TRANSITIONS.get(current_status, [])
                 
                 if new_status not in allowed_transitions:
@@ -635,12 +694,43 @@ class ProjectService:
                         "new_status": new_status
                     }
                 )
-                
-                # TODO: Call audit_service.log_status_change() with before/after status
+
+                # Audit + notifications in same transaction
+                audit_service = AuditService(self.db)
+                notification_service = NotificationService(self.db)
+                after_snapshot = self._serialize_project_snapshot(updated_project)
+
+                await audit_service.create_audit_entry(
+                    tenant_id=tenant_id,
+                    event_type="project_status_updated",
+                    entity_type="project",
+                    entity_id=project_id,
+                    actor_user_id=actor_user_id,
+                    actor_organisation_id=actor_organisation_id,
+                    previous_state=before_snapshot,
+                    new_state=after_snapshot,
+                )
+
+                await notification_service.create_notifications_for_recipients(
+                    tenant_id=tenant_id,
+                    recipient_user_ids=recipient_user_ids,
+                    event_type="project_status_updated",
+                    project_id=updated_project.id,
+                    message=(
+                        f"Project '{updated_project.name}' status changed from "
+                        f"'{current_status}' to '{new_status}'."
+                    ),
+                )
                 
                 return updated_project
         
-        except (ProjectDataError, RepositoryError) as e:
+        except (
+            ProjectDataError,
+            RepositoryError,
+            AuditCreateServiceError,
+            NotificationCreateServiceError,
+            NotificationAuditValidationServiceError,
+        ) as e:
             self.logger.error(
                 "Failed to update project status",
                 extra={"project_id": project_id, "team_id": team_id},
@@ -654,7 +744,10 @@ class ProjectService:
         self,
         tenant_id: int,
         team_id: int,
-        project_id: int
+        project_id: int,
+        actor_user_id: int,
+        actor_organisation_id: int,
+        recipient_user_ids: list[int],
     ) -> bool:
         """
         Soft delete a project.
@@ -689,6 +782,13 @@ class ProjectService:
             - Deleted project can be restored with restore_project()
             - Returns generic error if project not found (avoids leaking team info)
         """
+        self._validate_integration_context(
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            actor_organisation_id=actor_organisation_id,
+            recipient_user_ids=recipient_user_ids,
+        )
+
         try:
             # Establish transaction boundary for delete operation
             # Both read (verify project exists) and write (soft delete) occur in same transaction
@@ -699,6 +799,7 @@ class ProjectService:
                 )
                 if not project:
                     raise ProjectNotFoundError("Project not found or access denied")
+                before_snapshot = self._serialize_project_snapshot(project)
                 
                 # Perform atomic soft delete with team isolation
                 success = await self.repository.delete(tenant_id, team_id, project_id)
@@ -713,12 +814,38 @@ class ProjectService:
                         "team_id": team_id
                     }
                 )
-                
-                # TODO: Call audit_service.log_delete() with project details
+
+                # Audit + notifications in same transaction
+                audit_service = AuditService(self.db)
+                notification_service = NotificationService(self.db)
+
+                await audit_service.create_audit_entry(
+                    tenant_id=tenant_id,
+                    event_type="project_deleted",
+                    entity_type="project",
+                    entity_id=project_id,
+                    actor_user_id=actor_user_id,
+                    actor_organisation_id=actor_organisation_id,
+                    previous_state=before_snapshot,
+                    new_state=None,
+                )
+
+                await notification_service.create_notifications_for_recipients(
+                    tenant_id=tenant_id,
+                    recipient_user_ids=recipient_user_ids,
+                    event_type="project_deleted",
+                    project_id=project.id,
+                    message=f"Project '{project.name}' was deleted.",
+                )
                 
                 return True
         
-        except RepositoryError as e:
+        except (
+            RepositoryError,
+            AuditCreateServiceError,
+            NotificationCreateServiceError,
+            NotificationAuditValidationServiceError,
+        ) as e:
             self.logger.error(
                 "Failed to delete project",
                 extra={"project_id": project_id, "team_id": team_id},
@@ -791,3 +918,54 @@ class ProjectService:
                 exc_info=e
             )
             raise
+
+    # ==================== INTERNAL HELPERS ====================
+
+    @staticmethod
+    def _serialize_project_snapshot(project: Project) -> dict:
+        """
+        Build JSON-compatible project snapshot for audit logs.
+
+        Contains exactly:
+        - id
+        - tenant_id
+        - team_id
+        - name
+        - description
+        - status
+        - created_at (ISO-8601 string or None)
+        - updated_at (ISO-8601 string or None)
+        - is_deleted
+        """
+        return {
+            "id": project.id,
+            "tenant_id": project.tenant_id,
+            "team_id": project.team_id,
+            "name": project.name,
+            "description": project.description,
+            "status": project.status,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+            "is_deleted": project.is_deleted,
+        }
+
+    @staticmethod
+    def _validate_integration_context(
+        *,
+        tenant_id: int,
+        actor_user_id: int,
+        actor_organisation_id: int,
+        recipient_user_ids: list[int],
+    ) -> None:
+        """Validate required integration context for project mutations."""
+        if actor_user_id <= 0:
+            raise ValueError("Invalid actor_user_id: must be positive integer")
+        if actor_organisation_id <= 0:
+            raise ValueError("Invalid actor_organisation_id: must be positive integer")
+        if actor_organisation_id != tenant_id:
+            raise ValueError("actor_organisation_id must match tenant_id")
+        if not recipient_user_ids:
+            raise ValueError("recipient_user_ids must be non-empty")
+        for recipient_id in recipient_user_ids:
+            if recipient_id <= 0:
+                raise ValueError("recipient_user_ids must contain only positive integers")
