@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from src.projects.database import init_db, close_db
 from src.projects.project_controller import router as projects_router
+from src.notifications.controller import router as notifications_audit_router
 
 # Configure structured logging
 logging.basicConfig(
@@ -59,6 +60,7 @@ app = FastAPI(
 
 # Mount project routes
 app.include_router(projects_router)
+app.include_router(notifications_audit_router)
 
 logger.info("FastAPI application initialized with Project routes mounted")
 
