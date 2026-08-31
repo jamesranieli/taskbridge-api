@@ -5,15 +5,21 @@ This module defines the SQLAlchemy ORM model for projects, which represent
 work items managed within teams and organizations (tenants).
 
 Design Principles:
-- Multi-tenant isolation enforced at model and database levels (tenant_id, team_id)
+- Multi-tenant isolation enforced at application level (tenant_id, team_id)
 - Soft deletes preserve audit history (is_deleted flag)
 - Timestamps auto-managed by ORM (onupdate for updated_at)
 - Immutable fields: id, tenant_id, team_id, created_at, is_deleted
 - Status field supports service-layer validation (not enforced at DB level)
+
+LIMITATION - Referential Integrity Pending Team/Tenant Integration:
+- tenant_id and team_id are stored as plain integer columns (no FK constraints)
+- Database-level referential integrity is NOT enforced until Tenant/Team models exist
+- Application-layer isolation (repository/service) enforces tenant+team filtering
+- When Tenant and Team models are implemented, add ForeignKey constraints to this model
 """
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, CheckConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, CheckConstraint
 
 from .database import Base
 
@@ -22,28 +28,30 @@ class Project(Base):
     """
     Project model representing a project within a tenant and team.
     
-    Multi-tenant isolation is enforced via tenant_id and team_id foreign keys.
+    Multi-tenant isolation is enforced at the application layer via
+    repository and service filtering on tenant_id and team_id.
+    
     Uses soft deletes (is_deleted flag) to preserve historical data and audit trails.
     
     Attributes:
         id (int): Unique project identifier (immutable, auto-generated)
         tenant_id (int): Tenant (organization) ID this project belongs to (immutable)
+                        Stored as plain integer; future FK to tenants.id when model exists
         team_id (int): Team ID within tenant that owns this project (immutable)
+                      Stored as plain integer; future FK to teams.id when model exists
         name (str): Human-readable project name (255 chars max, required)
         description (Optional[str]): Long-form project description (optional)
         status (str): Project lifecycle status (active, archived, inactive)
-            Valid transitions enforced at service layer, not database
+                     Valid transitions enforced at service layer, not database
         created_at (datetime): UTC timestamp when project was created (immutable, auto-set)
         updated_at (datetime): UTC timestamp of last modification (auto-managed by ORM)
         is_deleted (bool): Soft delete flag (immutable after set to True)
     
-    Relationships (configured when Tenant and Team models are available):
-        tenant: Refers to Tenant model (back_populates="projects")
-        team: Refers to Team model (back_populates="projects")
-    
-    Note:
-        Relationships with Tenant and Team are currently commented out pending
-        availability of those models. Uncomment and configure foreign_keys when ready.
+    Future Integration:
+        When Tenant and Team models are added to the application, update this model to:
+        - Add ForeignKey constraints: ForeignKey("tenants.id"), ForeignKey("teams.id")
+        - Add ORM relationships with back_populates for navigation
+        - Leverage database-level referential integrity
     """
     
     __tablename__ = "projects"
@@ -54,20 +62,18 @@ class Project(Base):
     # Primary key
     id = Column(Integer, primary_key=True, index=True)
     
-    # Multi-tenant isolation (immutable foreign keys)
+    # Multi-tenant isolation (indexed integer columns, no FK until Tenant/Team models exist)
     tenant_id = Column(
         Integer,
-        ForeignKey("tenants.id"),
         nullable=False,
         index=True,
-        comment="Organization/tenant this project belongs to"
+        comment="Organization/tenant this project belongs to (future: FK to tenants.id)",
     )
     team_id = Column(
         Integer,
-        ForeignKey("teams.id"),
         nullable=False,
         index=True,
-        comment="Team within the tenant that owns this project"
+        comment="Team within the tenant that owns this project (future: FK to teams.id)",
     )
     
     # Project metadata
@@ -80,7 +86,7 @@ class Project(Base):
         default="active",
         nullable=False,
         index=True,
-        comment="Project lifecycle status: active, archived, or inactive"
+        comment="Project lifecycle status: active, archived, or inactive",
     )
     
     # Timestamps (auto-managed by ORM via onupdate)
@@ -89,7 +95,7 @@ class Project(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
         index=True,
-        comment="UTC timestamp when project was created"
+        comment="UTC timestamp when project was created",
     )
     updated_at = Column(
         DateTime(timezone=True),
@@ -97,7 +103,7 @@ class Project(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
         index=True,
-        comment="UTC timestamp of last modification (auto-managed)"
+        comment="UTC timestamp of last modification (auto-managed)",
     )
     
     # Soft delete flag (immutable after set)
@@ -106,28 +112,24 @@ class Project(Base):
         default=False,
         nullable=False,
         index=True,
-        comment="Soft delete flag; preserves audit history"
+        comment="Soft delete flag; preserves audit history",
     )
     
     # Database-level constraints to support data integrity
     __table_args__ = (
         CheckConstraint(
             "status IN ('active', 'archived', 'inactive')",
-            name="ck_project_status_valid"
+            name="ck_project_status_valid",
         ),
         CheckConstraint(
             "tenant_id > 0",
-            name="ck_project_tenant_id_positive"
+            name="ck_project_tenant_id_positive",
         ),
         CheckConstraint(
             "team_id > 0",
-            name="ck_project_team_id_positive"
+            name="ck_project_team_id_positive",
         ),
     )
-    
-    # Relationships (uncomment and configure when Tenant and Team models are available)
-    # tenant = relationship("Tenant", back_populates="projects", foreign_keys=[tenant_id])
-    # team = relationship("Team", back_populates="projects", foreign_keys=[team_id])
     
     def __repr__(self) -> str:
         """String representation for debugging and logging."""
