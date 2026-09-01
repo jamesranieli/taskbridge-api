@@ -225,3 +225,163 @@ async def test_unauthorized_user_cannot_access_another_organisation_audit_log(
     data = response.json()
     assert data["total"] == 0
     assert data["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_audit_endpoint_success(test_client):
+    """Trusted caller can create an audit entry directly."""
+    payload = {
+        "tenant_id": 1,
+        "event_type": "project_created",
+        "entity_type": "project",
+        "entity_id": 999,
+        "actor_user_id": 1001,
+        "actor_organisation_id": 1,
+        "previous_state": None,
+        "new_state": {"status": "active"},
+    }
+
+    response = await test_client.post(
+        "/audit",
+        json=payload,
+        headers=organisation_headers(1),
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["tenant_id"] == 1
+    assert data["event_type"] == "project_created"
+    assert data["entity_id"] == 999
+    assert data["actor_user_id"] == 1001
+
+
+@pytest.mark.asyncio
+async def test_create_audit_rejects_organisation_mismatch(test_client):
+    """Audit creation is forbidden when payload tenant does not match caller."""
+    payload = {
+        "tenant_id": 1,
+        "event_type": "project_created",
+        "entity_type": "project",
+        "entity_id": 999,
+        "actor_user_id": 1001,
+        "actor_organisation_id": 1,
+        "previous_state": None,
+        "new_state": {"status": "active"},
+    }
+
+    response = await test_client.post(
+        "/audit",
+        json=payload,
+        headers=organisation_headers(2),
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_invalid_organisation_header_rejected(test_client):
+    """Organisation header must be a positive integer."""
+    response = await test_client.get(
+        "/notifications/101",
+        headers=organisation_headers(0),
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_unread_notifications_and_mark_read_flow(test_client):
+    """Unread notification can be retrieved, marked read, then disappears."""
+    project = await create_project(test_client)
+
+    notifications_response = await test_client.get(
+        "/notifications/101",
+        headers=organisation_headers(1),
+    )
+    assert notifications_response.status_code == 200
+
+    notifications = notifications_response.json()["data"]
+    assert len(notifications) >= 1
+
+    notification = next(
+        item for item in notifications if item["project_id"] == project["id"]
+    )
+    assert notification["read"] is False
+
+    mark_response = await test_client.patch(
+        f"/notifications/{notification['id']}/read",
+        json={
+            "recipient_user_id": 101,
+            "read": True,
+        },
+        headers=organisation_headers(1),
+    )
+
+    assert mark_response.status_code == 200
+    assert mark_response.json()["read"] is True
+
+    after_response = await test_client.get(
+        "/notifications/101",
+        headers=organisation_headers(1),
+    )
+    assert after_response.status_code == 200
+
+    after_ids = {
+        item["id"]
+        for item in after_response.json()["data"]
+    }
+    assert notification["id"] not in after_ids
+
+
+@pytest.mark.asyncio
+async def test_mark_notification_read_wrong_recipient_returns_404(test_client):
+    """A different recipient cannot mark another user's notification as read."""
+    project = await create_project(test_client)
+
+    notifications_response = await test_client.get(
+        "/notifications/101",
+        headers=organisation_headers(1),
+    )
+    notification = next(
+        item
+        for item in notifications_response.json()["data"]
+        if item["project_id"] == project["id"]
+    )
+
+    response = await test_client.patch(
+        f"/notifications/{notification['id']}/read",
+        json={
+            "recipient_user_id": 999,
+            "read": True,
+        },
+        headers=organisation_headers(1),
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_mark_notification_read_false_rejected(test_client):
+    """Mark-read request requires read=true."""
+    response = await test_client.patch(
+        "/notifications/999/read",
+        json={
+            "recipient_user_id": 101,
+            "read": False,
+        },
+        headers=organisation_headers(1),
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_invalid_audit_event_filter_rejected(test_client):
+    """Unsupported audit event filters are rejected."""
+    response = await test_client.get(
+        "/audit/1",
+        params={"eventType": "not_a_real_event"},
+        headers=organisation_headers(1),
+    )
+
+    assert response.status_code == 422
