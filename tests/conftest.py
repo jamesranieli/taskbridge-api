@@ -88,6 +88,7 @@ async def test_app(test_db_session):
     """
     from fastapi import FastAPI
     from src.projects.project_controller import router as projects_router
+    from src.notifications.controller import router as notifications_router
     from src.projects.database import get_db
     
     @asynccontextmanager
@@ -105,6 +106,7 @@ async def test_app(test_db_session):
     
     # Mount the real Project router
     test_app_instance.include_router(projects_router)
+    test_app_instance.include_router(notifications_router)
     
     # Override get_db dependency to use test database session
     async def override_get_db():
