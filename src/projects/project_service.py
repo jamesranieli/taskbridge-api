@@ -2,15 +2,19 @@
 Service layer for Project business logic.
 
 Enforces business rules, validation, and multi-tenant isolation.
+Integrates Audit and Notification creation within transactional mutations.
 """
 
 import logging
-from typing import Optional
+import uuid
+from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .project import Project
 from .project_repository import ProjectRepository, ProjectDataError, RepositoryError
 from .exceptions import ProjectNotFoundError, InvalidProjectStatusError, ProjectValidationError
+from src.audit.repository import AuditRepository
+from src.notifications.repository import NotificationRepository
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,7 @@ class ProjectService:
     - Multi-tenant isolation (tenant_id on all operations)
     - Team-based authorization (tenant_id + team_id)
     - Status transition rules
+    - Audit logging and notification creation within transactions
     """
     
     VALID_STATUSES = frozenset(["active", "archived", "inactive"])
@@ -39,21 +44,27 @@ class ProjectService:
         """Initialize service with database session."""
         self.db = db
         self.repository = ProjectRepository(db)
+        self.audit_repository = AuditRepository(db)
+        self.notification_repository = NotificationRepository(db)
     
     async def create_project(
         self,
         tenant_id: int,
         team_id: int,
         name: str,
+        actor_user_id: int,
+        recipient_user_ids: List[int],
         description: Optional[str] = None
     ) -> Project:
         """
-        Create a new project.
+        Create a new project with audit event and notifications.
         
         Args:
             tenant_id: Tenant (organization) ID
             team_id: Team ID that owns the project
             name: Project name (1-255 chars, required)
+            actor_user_id: User ID who triggered the creation
+            recipient_user_ids: User IDs to receive "project.created" notification
             description: Optional description (max 10000 chars)
         
         Returns:
@@ -84,6 +95,7 @@ class ProjectService:
         
         try:
             async with self.db.begin():
+                # 1. Create Project
                 project = await self.repository.create(
                     tenant_id=tenant_id,
                     team_id=team_id,
@@ -91,13 +103,50 @@ class ProjectService:
                     description=description_stripped,
                     status="active"
                 )
+                
+                # 2. Write Audit event
+                after_state = {
+                    "id": project.id,
+                    "tenant_id": project.tenant_id,
+                    "team_id": project.team_id,
+                    "name": project.name,
+                    "description": project.description,
+                    "status": project.status
+                }
+                audit_id = str(uuid.uuid4())
+                await self.audit_repository.create(
+                    audit_id=audit_id,
+                    tenant_id=tenant_id,
+                    event_type="project.created",
+                    entity_type="project",
+                    entity_id=project.id,
+                    actor_user_id=actor_user_id,
+                    actor_org_id=tenant_id,
+                    before_state=None,
+                    after_state=after_state
+                )
+                
+                # 3. Create Notifications for all recipients
+                for recipient_user_id in recipient_user_ids:
+                    notification_id = str(uuid.uuid4())
+                    await self.notification_repository.create(
+                        notification_id=notification_id,
+                        tenant_id=tenant_id,
+                        recipient_user_id=recipient_user_id,
+                        event_type="project.created",
+                        project_id=project.id,
+                        message=f"Project '{name_stripped}' created"
+                    )
+                
                 logger.info(
-                    "Project created",
+                    "Project created with audit and notifications",
                     extra={
                         "tenant_id": tenant_id,
                         "team_id": team_id,
                         "project_id": project.id,
-                        "name": name_stripped
+                        "name": name_stripped,
+                        "actor_user_id": actor_user_id,
+                        "recipient_count": len(recipient_user_ids)
                     }
                 )
                 return project
@@ -239,16 +288,20 @@ class ProjectService:
         tenant_id: int,
         team_id: int,
         project_id: int,
-        new_status: str
+        new_status: str,
+        actor_user_id: int,
+        recipient_user_ids: List[int]
     ) -> Project:
         """
-        Update project status with state transition validation.
+        Update project status with state transition validation, audit event, and notifications.
         
         Args:
             tenant_id: Tenant ID for isolation
             team_id: Team ID to verify ownership
             project_id: Project ID to update
             new_status: Target status (active, archived, or inactive)
+            actor_user_id: User ID who triggered the status change
+            recipient_user_ids: User IDs to receive "project.status_updated" notification
         
         Returns:
             Updated Project instance
@@ -284,21 +337,69 @@ class ProjectService:
                         f"Allowed: {', '.join(allowed_transitions) or 'none'}"
                     )
                 
-                # Update status
+                # Capture before state
+                before_state = {
+                    "id": project.id,
+                    "tenant_id": project.tenant_id,
+                    "team_id": project.team_id,
+                    "name": project.name,
+                    "description": project.description,
+                    "status": project.status
+                }
+                
+                # 1. Update status
                 updated_project = await self.repository.update(
                     tenant_id, team_id, project_id, status=new_status
                 )
                 if not updated_project:
                     raise ProjectNotFoundError("Project not found or access denied")
                 
+                # Capture after state
+                after_state = {
+                    "id": updated_project.id,
+                    "tenant_id": updated_project.tenant_id,
+                    "team_id": updated_project.team_id,
+                    "name": updated_project.name,
+                    "description": updated_project.description,
+                    "status": updated_project.status
+                }
+                
+                # 2. Write Audit event
+                audit_id = str(uuid.uuid4())
+                await self.audit_repository.create(
+                    audit_id=audit_id,
+                    tenant_id=tenant_id,
+                    event_type="project.status_updated",
+                    entity_type="project",
+                    entity_id=project_id,
+                    actor_user_id=actor_user_id,
+                    actor_org_id=tenant_id,
+                    before_state=before_state,
+                    after_state=after_state
+                )
+                
+                # 3. Create Notifications for all recipients
+                for recipient_user_id in recipient_user_ids:
+                    notification_id = str(uuid.uuid4())
+                    await self.notification_repository.create(
+                        notification_id=notification_id,
+                        tenant_id=tenant_id,
+                        recipient_user_id=recipient_user_id,
+                        event_type="project.status_updated",
+                        project_id=project_id,
+                        message=f"Project '{updated_project.name}' status changed to {new_status}"
+                    )
+                
                 logger.info(
-                    "Project status updated",
+                    "Project status updated with audit and notifications",
                     extra={
                         "tenant_id": tenant_id,
                         "team_id": team_id,
                         "project_id": project_id,
                         "old_status": current_status,
-                        "new_status": new_status
+                        "new_status": new_status,
+                        "actor_user_id": actor_user_id,
+                        "recipient_count": len(recipient_user_ids)
                     }
                 )
                 return updated_project
@@ -314,15 +415,19 @@ class ProjectService:
         self,
         tenant_id: int,
         team_id: int,
-        project_id: int
+        project_id: int,
+        actor_user_id: int,
+        recipient_user_ids: List[int]
     ) -> bool:
         """
-        Delete a project.
+        Delete a project with audit event and notifications.
         
         Args:
             tenant_id: Tenant ID for isolation
             team_id: Team ID to verify ownership
             project_id: Project ID to delete
+            actor_user_id: User ID who triggered the deletion
+            recipient_user_ids: User IDs to receive "project.deleted" notification
         
         Returns:
             True if deletion succeeded
@@ -333,16 +438,62 @@ class ProjectService:
         """
         try:
             async with self.db.begin():
+                # Fetch project before deletion to capture state
+                project = await self.repository.read_by_id_and_team(
+                    tenant_id, team_id, project_id
+                )
+                if not project:
+                    raise ProjectNotFoundError("Project not found or access denied")
+                
+                # Capture before state
+                before_state = {
+                    "id": project.id,
+                    "tenant_id": project.tenant_id,
+                    "team_id": project.team_id,
+                    "name": project.name,
+                    "description": project.description,
+                    "status": project.status
+                }
+                
+                # 1. Delete Project
                 success = await self.repository.delete(tenant_id, team_id, project_id)
                 if not success:
                     raise ProjectNotFoundError("Project not found or access denied")
                 
+                # 2. Write Audit event
+                audit_id = str(uuid.uuid4())
+                await self.audit_repository.create(
+                    audit_id=audit_id,
+                    tenant_id=tenant_id,
+                    event_type="project.deleted",
+                    entity_type="project",
+                    entity_id=project_id,
+                    actor_user_id=actor_user_id,
+                    actor_org_id=tenant_id,
+                    before_state=before_state,
+                    after_state=None
+                )
+                
+                # 3. Create Notifications for all recipients
+                for recipient_user_id in recipient_user_ids:
+                    notification_id = str(uuid.uuid4())
+                    await self.notification_repository.create(
+                        notification_id=notification_id,
+                        tenant_id=tenant_id,
+                        recipient_user_id=recipient_user_id,
+                        event_type="project.deleted",
+                        project_id=project_id,
+                        message=f"Project '{before_state['name']}' deleted"
+                    )
+                
                 logger.info(
-                    "Project deleted",
+                    "Project deleted with audit and notifications",
                     extra={
                         "tenant_id": tenant_id,
                         "team_id": team_id,
-                        "project_id": project_id
+                        "project_id": project_id,
+                        "actor_user_id": actor_user_id,
+                        "recipient_count": len(recipient_user_ids)
                     }
                 )
                 return True
