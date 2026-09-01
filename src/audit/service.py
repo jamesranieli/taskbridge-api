@@ -6,6 +6,7 @@ Creates immutable audit events with validation and isolation.
 
 import logging
 import uuid
+import ipaddress
 from typing import Optional
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +36,8 @@ class AuditService:
     VALID_EVENT_TYPES = frozenset([
         "project.created",
         "project.status_updated",
-        "project.deleted"
+        "project.deleted",
+        "MILESTONE_REOPENED"
     ])
     VALID_ENTITY_TYPES = frozenset(["project"])
     
@@ -53,20 +55,22 @@ class AuditService:
         actor_user_id: int,
         actor_org_id: int,
         before_state: Optional[dict] = None,
-        after_state: Optional[dict] = None
+        after_state: Optional[dict] = None,
+        actor_ip: Optional[str] = None
     ) -> Audit:
         """
         Create an immutable audit event.
         
         Args:
             tenant_id (int): Tenant ID for isolation
-            event_type (str): Event type (project.created, project.status_updated, project.deleted)
+            event_type (str): Event type (project.created, project.status_updated, project.deleted, MILESTONE_REOPENED)
             entity_type (str): Entity type (project)
             entity_id (int): Entity ID (Project ID)
             actor_user_id (int): User ID who triggered the mutation
             actor_org_id (int): Organization ID of actor (must equal tenant_id)
             before_state (dict): Previous state (optional)
             after_state (dict): New state (optional)
+            actor_ip (str): IP address of actor (optional)
         
         Returns:
             Audit: Newly created audit record
@@ -100,6 +104,15 @@ class AuditService:
         if not isinstance(actor_user_id, int) or actor_user_id <= 0:
             raise AuditValidationError("actor_user_id must be a positive integer")
         
+        # Validate actor_ip if provided
+        if actor_ip is not None:
+            try:
+                ipaddress.ip_address(actor_ip)
+            except ValueError:
+                raise AuditValidationError(
+                    "actor_ip must be a valid IPv4 or IPv6 address"
+                )
+        
         try:
             # Generate UUID for audit record
             audit_id = str(uuid.uuid4())
@@ -114,7 +127,8 @@ class AuditService:
                     actor_user_id=actor_user_id,
                     actor_org_id=actor_org_id,
                     before_state=before_state,
-                    after_state=after_state
+                    after_state=after_state,
+                    actor_ip=actor_ip
                 )
                 logger.info(
                     "Audit event created",
@@ -123,7 +137,8 @@ class AuditService:
                         "tenant_id": tenant_id,
                         "event_type": event_type,
                         "entity_id": entity_id,
-                        "actor_user_id": actor_user_id
+                        "actor_user_id": actor_user_id,
+                        "ip_captured": actor_ip is not None
                     }
                 )
                 return audit
