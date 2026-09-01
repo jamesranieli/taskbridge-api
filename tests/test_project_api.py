@@ -11,6 +11,15 @@ Tests have NOT been executed yet. All assertions are proposed.
 import pytest
 
 
+def mutation_headers(tenant_id: int, recipients: str = "101,102") -> dict[str, str]:
+    """Build required trusted-context headers for Project mutation endpoints."""
+    return {
+        "X-Organisation-ID": str(tenant_id),
+        "X-Actor-User-ID": "1001",
+        "X-Recipient-User-Ids": recipients,
+    }
+
+
 # ==================== CREATE PROJECT TESTS ====================
 
 @pytest.mark.asyncio
@@ -18,7 +27,8 @@ async def test_create_project_success(test_client, valid_project_create):
     """Test successful project creation with valid input."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 201
@@ -36,7 +46,8 @@ async def test_create_project_minimal(test_client, valid_project_minimal):
     """Test project creation without description."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_minimal
+        json=valid_project_minimal,
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 201
@@ -50,7 +61,8 @@ async def test_create_project_empty_name(test_client):
     """Test project creation with empty name raises 422."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={"name": "   "}
+        json={"name": "   "},
+        headers=mutation_headers(1)
     )
     
     # Pydantic validates via min_length=1 and custom validator
@@ -63,7 +75,8 @@ async def test_create_project_name_too_long(test_client):
     """Test project creation with name > 255 chars raises 422."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={"name": "x" * 256}
+        json={"name": "x" * 256},
+        headers=mutation_headers(1)
     )
     
     # Pydantic validates max_length=255
@@ -76,7 +89,8 @@ async def test_create_project_description_too_long(test_client):
     """Test project creation with description > 10000 chars raises 422."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={"name": "Valid", "description": "x" * 10001}
+        json={"name": "Valid", "description": "x" * 10001},
+        headers=mutation_headers(1)
     )
     
     # Pydantic validates max_length=10000
@@ -88,7 +102,8 @@ async def test_create_project_name_whitespace_stripped(test_client):
     """Test that project name whitespace is stripped during validation."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={"name": "  Test Project  ", "description": "  Test  "}
+        json={"name": "  Test Project  ", "description": "  Test  "},
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 201
@@ -103,7 +118,8 @@ async def test_create_project_missing_name(test_client):
     """Test project creation without required name field raises 422."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={}
+        json={},
+        headers=mutation_headers(1)
     )
     
     # Pydantic requires 'name' field (...)
@@ -137,7 +153,8 @@ async def test_list_projects_multiple_projects(test_client, valid_project_create
         create_data["name"] = f"Project {i}"
         resp = await test_client.post(
             "/api/v1/tenants/1/teams/5/projects",
-            json=create_data
+            json=create_data,
+            headers=mutation_headers(1)
         )
         project_ids.append(resp.json()["id"])
     
@@ -161,7 +178,8 @@ async def test_list_projects_pagination_limit(test_client, valid_project_create)
         create_data["name"] = f"Project {i}"
         await test_client.post(
             "/api/v1/tenants/1/teams/5/projects",
-            json=create_data
+            json=create_data,
+            headers=mutation_headers(1)
         )
     
     # Request with limit=2
@@ -186,7 +204,8 @@ async def test_list_projects_pagination_offset(test_client, valid_project_create
         create_data["name"] = f"Project {i}"
         resp = await test_client.post(
             "/api/v1/tenants/1/teams/5/projects",
-            json=create_data
+            json=create_data,
+            headers=mutation_headers(1)
         )
         created_ids.append(resp.json()["id"])
     
@@ -247,18 +266,21 @@ async def test_list_projects_excludes_deleted(test_client, valid_project_create)
     # Create 2 projects
     resp1 = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={**valid_project_create, "name": "Project 1"}
+        json={**valid_project_create, "name": "Project 1"},
+        headers=mutation_headers(1)
     )
     project1_id = resp1.json()["id"]
     
     resp2 = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json={**valid_project_create, "name": "Project 2"}
+        json={**valid_project_create, "name": "Project 2"},
+        headers=mutation_headers(1)
     )
     
     # Delete first project
     await test_client.delete(
-        f"/api/v1/tenants/1/teams/5/projects/{project1_id}"
+        f"/api/v1/tenants/1/teams/5/projects/{project1_id}",
+        headers=mutation_headers(1)
     )
     
     # List projects
@@ -280,14 +302,16 @@ async def test_update_status_active_to_archived(test_client, valid_project_creat
     # Create project (starts in active)
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     # Update status to archived
     response = await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "archived"}
+        json={"status": "archived"},
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 200
@@ -300,13 +324,15 @@ async def test_update_status_active_to_inactive(test_client, valid_project_creat
     """Test valid status transition: active -> inactive."""
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     response = await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "inactive"}
+        json={"status": "inactive"},
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 200
@@ -318,20 +344,23 @@ async def test_update_status_archived_to_active(test_client, valid_project_creat
     """Test valid status transition: archived -> active."""
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     # Archive
     await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "archived"}
+        json={"status": "archived"},
+        headers=mutation_headers(1)
     )
     
     # Reactivate
     response = await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "active"}
+        json={"status": "active"},
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 200
@@ -343,14 +372,16 @@ async def test_update_status_invalid_status_value(test_client, valid_project_cre
     """Test updating with invalid status value raises 422."""
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     # Try invalid status
     response = await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "invalid"}
+        json={"status": "invalid"},
+        headers=mutation_headers(1)
     )
     
     # Pydantic schema validates status in {active, archived, inactive}
@@ -362,20 +393,23 @@ async def test_update_status_invalid_transition(test_client, valid_project_creat
     """Test invalid state transition raises 400."""
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     # Archive it
     await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "archived"}
+        json={"status": "archived"},
+        headers=mutation_headers(1)
     )
     
     # Try invalid transition (archived -> inactive not allowed)
     response = await test_client.patch(
         f"/api/v1/tenants/1/teams/5/projects/{project_id}/status",
-        json={"status": "inactive"}
+        json={"status": "inactive"},
+        headers=mutation_headers(1)
     )
     
     # Service layer raises InvalidProjectStatusError -> 400
@@ -387,7 +421,8 @@ async def test_update_status_nonexistent_project(test_client):
     """Test updating status on nonexistent project raises 403."""
     response = await test_client.patch(
         "/api/v1/tenants/1/teams/5/projects/99999/status",
-        json={"status": "archived"}
+        json={"status": "archived"},
+        headers=mutation_headers(1)
     )
     
     # Service raises ProjectNotFoundError -> 403 (not 404 to avoid leaking info)
@@ -401,12 +436,14 @@ async def test_delete_project_success(test_client, valid_project_create):
     """Test successful project soft delete."""
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     response = await test_client.delete(
-        f"/api/v1/tenants/1/teams/5/projects/{project_id}"
+        f"/api/v1/tenants/1/teams/5/projects/{project_id}",
+        headers=mutation_headers(1)
     )
     
     assert response.status_code == 204
@@ -416,7 +453,8 @@ async def test_delete_project_success(test_client, valid_project_create):
 async def test_delete_project_nonexistent(test_client):
     """Test deleting nonexistent project raises 403."""
     response = await test_client.delete(
-        "/api/v1/tenants/1/teams/5/projects/99999"
+        "/api/v1/tenants/1/teams/5/projects/99999",
+        headers=mutation_headers(1)
     )
     
     # Service raises ProjectNotFoundError -> 403
@@ -428,13 +466,15 @@ async def test_deleted_project_hidden_from_list(test_client, valid_project_creat
     """Test that deleted project is hidden from list operations."""
     create_resp = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = create_resp.json()["id"]
     
     # Delete it
     await test_client.delete(
-        f"/api/v1/tenants/1/teams/5/projects/{project_id}"
+        f"/api/v1/tenants/1/teams/5/projects/{project_id}",
+        headers=mutation_headers(1)
     )
     
     # List should show 0 projects
@@ -454,13 +494,15 @@ async def test_tenant_isolation_list(test_client, valid_project_create):
     for i in range(2):
         await test_client.post(
             "/api/v1/tenants/1/teams/5/projects",
-            json={**valid_project_create, "name": f"T1 Project {i}"}
+            json={**valid_project_create, "name": f"T1 Project {i}"},
+            headers=mutation_headers(1)
         )
     
     # Create 1 project in tenant 2
     await test_client.post(
         "/api/v1/tenants/2/teams/5/projects",
-        json={**valid_project_create, "name": "T2 Project"}
+        json={**valid_project_create, "name": "T2 Project"},
+        headers=mutation_headers(2)
     )
     
     # List tenant 1 projects
@@ -484,14 +526,16 @@ async def test_tenant_isolation_update_status(test_client, valid_project_create)
     # Create project in tenant 1, team 5
     resp1 = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = resp1.json()["id"]
     
     # Try to update from tenant 2, team 5 (wrong tenant)
     response = await test_client.patch(
         f"/api/v1/tenants/2/teams/5/projects/{project_id}/status",
-        json={"status": "archived"}
+        json={"status": "archived"},
+        headers=mutation_headers(2)
     )
     
     # Service cannot find project in tenant 2 -> 403
@@ -510,13 +554,15 @@ async def test_tenant_isolation_delete(test_client, valid_project_create):
     # Create project in tenant 1, team 5
     resp1 = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = resp1.json()["id"]
     
     # Try to delete from tenant 2, team 5 (wrong tenant)
     response = await test_client.delete(
-        f"/api/v1/tenants/2/teams/5/projects/{project_id}"
+        f"/api/v1/tenants/2/teams/5/projects/{project_id}",
+        headers=mutation_headers(2)
     )
     
     # Cannot find in tenant 2 -> 403
@@ -538,13 +584,15 @@ async def test_team_isolation_list(test_client, valid_project_create):
     for i in range(2):
         await test_client.post(
             "/api/v1/tenants/1/teams/5/projects",
-            json={**valid_project_create, "name": f"Team5 Project {i}"}
+            json={**valid_project_create, "name": f"Team5 Project {i}"},
+            headers=mutation_headers(1)
         )
     
     # Create 1 project in team 10
     await test_client.post(
         "/api/v1/tenants/1/teams/10/projects",
-        json={**valid_project_create, "name": "Team10 Project"}
+        json={**valid_project_create, "name": "Team10 Project"},
+        headers=mutation_headers(1)
     )
     
     # List team 5 projects
@@ -567,14 +615,16 @@ async def test_team_isolation_update_status(test_client, valid_project_create):
     # Create project in team 5
     resp1 = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = resp1.json()["id"]
     
     # Try to update from team 10 (wrong team)
     response = await test_client.patch(
         f"/api/v1/tenants/1/teams/10/projects/{project_id}/status",
-        json={"status": "archived"}
+        json={"status": "archived"},
+        headers=mutation_headers(1)
     )
     
     # Cannot find in team 10 -> 403
@@ -593,13 +643,15 @@ async def test_team_isolation_delete(test_client, valid_project_create):
     # Create project in team 5
     resp1 = await test_client.post(
         "/api/v1/tenants/1/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     project_id = resp1.json()["id"]
     
     # Try to delete from team 10 (wrong team)
     response = await test_client.delete(
-        f"/api/v1/tenants/1/teams/10/projects/{project_id}"
+        f"/api/v1/tenants/1/teams/10/projects/{project_id}",
+        headers=mutation_headers(1)
     )
     
     # Cannot find in team 10 -> 403
@@ -619,7 +671,8 @@ async def test_invalid_tenant_id_zero(test_client, valid_project_create):
     """Test that tenant_id=0 is rejected by FastAPI path validation."""
     response = await test_client.post(
         "/api/v1/tenants/0/teams/5/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     
     # FastAPI Path validator: gt=0
@@ -631,7 +684,8 @@ async def test_invalid_team_id_zero(test_client, valid_project_create):
     """Test that team_id=0 is rejected by FastAPI path validation."""
     response = await test_client.post(
         "/api/v1/tenants/1/teams/0/projects",
-        json=valid_project_create
+        json=valid_project_create,
+        headers=mutation_headers(1)
     )
     
     # FastAPI Path validator: gt=0
@@ -642,7 +696,8 @@ async def test_invalid_team_id_zero(test_client, valid_project_create):
 async def test_invalid_project_id_zero(test_client):
     """Test that project_id=0 is rejected by FastAPI path validation."""
     response = await test_client.delete(
-        "/api/v1/tenants/1/teams/5/projects/0"
+        "/api/v1/tenants/1/teams/5/projects/0",
+        headers=mutation_headers(1)
     )
     
     # FastAPI Path validator: gt=0
@@ -666,7 +721,10 @@ async def test_service_validation_empty_name(test_db_session):
             tenant_id=1,
             team_id=5,
             name="   ",
-            description="Test"
+            description="Test",
+            actor_user_id=1001,
+            actor_organisation_id=1,
+            recipient_user_ids=[101, 102],
         )
 
 
@@ -682,12 +740,25 @@ async def test_service_validation_invalid_transition(test_db_session):
         tenant_id=1,
         team_id=5,
         name="Test",
-        description="Test"
+        description="Test",
+        actor_user_id=1001,
+        actor_organisation_id=1,
+        recipient_user_ids=[101, 102],
     )
     
     # Archive it
-    await service.update_status(1, 5, project.id, "archived")
+    await service.update_status(
+        1, 5, project.id, "archived",
+        actor_user_id=1001,
+        actor_organisation_id=1,
+        recipient_user_ids=[101, 102],
+    )
     
     # Try invalid transition (archived -> inactive)
     with pytest.raises(InvalidProjectStatusError):
-        await service.update_status(1, 5, project.id, "inactive")
+        await service.update_status(
+            1, 5, project.id, "inactive",
+            actor_user_id=1001,
+            actor_organisation_id=1,
+            recipient_user_ids=[101, 102],
+        )

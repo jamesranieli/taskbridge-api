@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from src.projects.database import Base
 # Import Project model to register it with SQLAlchemy metadata before create_all()
 from src.projects.project import Project
+from src.notifications.models import AuditLog, Notification
 
 
 @pytest_asyncio.fixture
