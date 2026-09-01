@@ -1,0 +1,34 @@
+# Copilot Prompt Log
+
+This log records the major Copilot interactions used during the TaskBridge assessment, including the prompting technique, Copilot feature, and why each prompt was used.
+
+| # | Prompt / Interaction | Copilot Feature | Prompting Technique | Rationale |
+|---|---|---|---|---|
+| 1 | `Create a Project Service with create, get, update, delete, and status update functionality.` | Copilot coding agent | Low-context / zero-shot | Required initial low-effort prompt used to establish an unreviewed baseline before remediation. |
+| 2 | `Create only src/projects/project_service.py with minimal create, get, update, delete, and status update functionality. Do not create any other files, tests, or documentation.` | Copilot coding agent | Constraint prompting | Limited Copilot after the first attempt failed to produce the complete requested baseline service. |
+| 3 | Review the generated Project Service for architecture, security, tenant isolation, validation, error handling, logging, and ORM usage. | Copilot Chat | Review / critique prompting | Used Copilot to identify candidate defects before applying human architectural judgment. |
+| 4 | Re-review only the files that currently exist in the repository and do not reference deleted or previous implementations. | Copilot Chat | Corrective / context-bounding prompting | Copilot referenced stale deleted code, so the review had to be constrained to the current repository state. |
+| 5 | Implement the Project model, repository, and remediated service using the repository instructions and shared SQLAlchemy Base. | Copilot coding agent | Specification / constraint prompting | Directed remediation toward the required model -> repository -> service architecture and ORM-only access. |
+| 6 | Implement Audit and Notification models, repositories, and services according to SPEC.md, preserving tenant isolation and immutable audit history. | Copilot coding agent | Context-grounded prompting | Used the written specification as the contract for implementation rather than allowing unconstrained generation. |
+| 7 | Integrate Project create, status update, and delete with audit events and equal notifications for supplied team recipients. | Copilot coding agent | Task decomposition | Added cross-service behavior only after the individual services and contracts existed. |
+| 8 | Revise IMPACT_ANALYSIS.md to use the exact event `MILESTONE_REOPENED`, reference only files that actually exist, and analyze actor IP privacy, retention, and logging risks before implementation. | Copilot Chat | Corrective / constraint prompting | Corrected Copilot's renamed event, invented test references, and unsupported implementation assumptions. |
+| 9 | Implement the approved `MILESTONE_REOPENED` and optional actor IP scope change without changing unrelated architecture. | Copilot coding agent | Scope-constrained prompting | Kept the mid-sprint change additive and limited to the approved impact analysis. |
+| 10 | Do not include the raw actor IP in validation errors or logs; record only whether an IP was captured. | Copilot Chat | Security-focused corrective prompting | Human review identified unnecessary exposure of potentially sensitive IP data in Copilot-generated behavior. |
+| 11 | Generate exactly the six assessment-required tests and do not add extra test cases. | Copilot coding agent | Explicit enumeration / constraint prompting | Prevented test expansion beyond the assessment's required six scenarios. |
+| 12 | Revise the audit immutability test so it verifies the public service contract rather than directly issuing an UPDATE against the audit table. | Copilot Chat | Corrective prompting | The initial test contradicted the intended service-layer immutability requirement. |
+| 13 | Fix the async database fixture based on the actual pytest execution error. | Copilot Chat | Error-driven prompting | Runtime execution showed that the generated async fixture used the wrong decorator. |
+| 14 | Analyze the existing repository structure and exact service signatures before proposing FastAPI routes; do not invent a parallel app architecture, synchronous sessions, UUID project IDs, or nonexistent modules. | Copilot Chat / repository context | Context-bounding / negative constraints | Multiple route proposals conflicted with the actual repository, so exact constraints were supplied from inspected code. |
+| 15 | Create minimal typed FastAPI schemas and routes for the existing Project, Audit, and Notification services using their exact signatures. | Copilot coding agent | Few-context / contract-driven prompting | Connected the required controller/route layer without changing the established service contracts. |
+| 16 | Compare the proposed API implementation against the repository and preserve the existing async SQLAlchemy architecture and integer Project IDs. | Copilot Chat | Verification prompting | Used a second pass to catch architecture and type mismatches before accepting generated code. |
+
+At least two Copilot interaction modes were used across the workflow, including conversational review through Copilot Chat and code-generation/change workflows through the Copilot coding agent. Prompting techniques included low-context prompting, explicit constraints, context grounding, task decomposition, corrective prompting, error-driven prompting, security-focused prompting, and verification prompting.
+
+## Post-Generation Corrections
+
+Human review was required throughout the assessment. Copilot initially over-scoped the Project Service, later referenced deleted/stale code during review, and proposed separate or incompatible application structures while generating the API layer. It also proposed inconsistent identifier types and imports that did not match the existing repository.
+
+The generated impact analysis initially changed the required `MILESTONE_REOPENED` event name and referenced implementation details that did not exist. These were corrected before the scope change was implemented. Human review also removed raw actor IP data from error/logging behavior because retaining or exposing the value was unnecessary.
+
+Testing exposed additional issues that generation alone did not catch. The async pytest fixture required the pytest-asyncio fixture decorator, and the audit immutability test was revised to validate the service-layer contract rather than mutate the database directly. All six required assessment tests passed after these corrections.
+
+During API work, Copilot repeatedly proposed code against stale or invented repository structures. Even after an acceptable diff was produced, the agent initially reported that changes had been applied when the working tree had not changed. The final API implementation was therefore verified against the actual service signatures, executed locally, and accepted only after the six required tests passed and FastAPI successfully registered the expected routes.
