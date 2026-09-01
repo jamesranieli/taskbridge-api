@@ -1,3 +1,4 @@
+import pytest_asyncio
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -5,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from src.projects.project import Base
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session():
     """Create in-memory SQLite database for each test."""
     engine = create_async_engine(
