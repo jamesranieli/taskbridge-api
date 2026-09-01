@@ -52,7 +52,8 @@ class AuditRepository:
         actor_user_id: int,
         actor_org_id: int,
         before_state: Optional[dict] = None,
-        after_state: Optional[dict] = None
+        after_state: Optional[dict] = None,
+        actor_ip: Optional[str] = None
     ) -> Audit:
         """
         Create a new immutable audit record.
@@ -60,13 +61,14 @@ class AuditRepository:
         Args:
             audit_id (str): UUID string for this audit event
             tenant_id (int): Tenant ID for isolation
-            event_type (str): Event type (project.created, project.status_updated, project.deleted)
+            event_type (str): Event type (project.created, project.status_updated, project.deleted, MILESTONE_REOPENED)
             entity_type (str): Entity type (currently: project)
             entity_id (int): Entity ID (Project ID)
             actor_user_id (int): User ID who triggered the mutation
             actor_org_id (int): Organization ID of actor
             before_state (dict): Previous state (optional)
             after_state (dict): New state (optional)
+            actor_ip (str): Optional IP address of actor
         
         Returns:
             Audit: Newly created audit record
@@ -84,7 +86,8 @@ class AuditRepository:
                 actor_user_id=actor_user_id,
                 actor_org_id=actor_org_id,
                 before_state=before_state,
-                after_state=after_state
+                after_state=after_state,
+                actor_ip=actor_ip
             )
             self.db.add(audit)
             await self.db.flush()
@@ -94,7 +97,8 @@ class AuditRepository:
                     "audit_id": audit_id,
                     "tenant_id": tenant_id,
                     "event_type": event_type,
-                    "entity_id": entity_id
+                    "entity_id": entity_id,
+                    "ip_captured": actor_ip is not None
                 }
             )
             return audit
