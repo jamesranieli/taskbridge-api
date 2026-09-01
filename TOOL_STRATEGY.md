@@ -5,7 +5,7 @@
 | # | Copilot Feature | Where Used | Strategy and Result |
 |---|---|---|---|
 | 1 | Repository custom instructions | `.github/copilot-instructions.md` | Established Python, FastAPI, SQLAlchemy ORM, layered architecture, validation, tenant isolation, typed contracts, logging, and audit immutability as repository-wide guidance. |
-| 2 | Copilot coding agent | Initial Project Service | Generated the required low-effort baseline first, preserving it unreviewed before architectural remediation. |
+| 2 | Copilot coding agent | Initial Project Service | Generated the initial low-effort Project Service baseline, preserving the generated output before architectural remediation. |
 | 3 | Copilot Chat | Project review and remediation | Used conversational review to identify architecture, security, validation, tenant-isolation, logging, and error-handling concerns, followed by human verification. |
 | 4 | Copilot coding agent | Audit and Notification implementation | Generated implementation from the previously written SPEC.md so the code was constrained by explicit contracts rather than an open-ended request. |
 | 5 | Copilot Chat | Mid-sprint scope analysis | Helped analyze the `MILESTONE_REOPENED` and actor-IP change before implementation; human review corrected invented assumptions and privacy concerns. |
@@ -13,21 +13,23 @@
 | 7 | Copilot Chat | Debugging | Used actual pytest output to diagnose the fixture decorator problem instead of asking Copilot to speculate about a passing implementation. |
 | 8 | Copilot repository/code context | API design | Inspected existing service signatures and repository structure before accepting typed FastAPI schemas and routes. |
 | 9 | Copilot coding agent | FastAPI layer | Proposed database dependencies, schemas, and routes; generated output was compared against the real repository before acceptance. |
-| 10 | Copilot code review / review workflow | Human verification workflow | Generated changes were treated as review candidates rather than authoritative output; repository state, diffs, tests, and route registration were independently checked before acceptance. |
+| 10 | Copilot Chat with repository context | Human verification workflow | Generated changes were treated as review candidates rather than authoritative output; repository state, diffs, tests, and route registration were independently checked before acceptance. |
 
-The workflow therefore used at least four distinct Copilot capabilities or usage modes: repository custom instructions, Copilot Chat, the Copilot coding agent/code-change workflow, and Copilot repository/code-review context.
+The workflow therefore used at least four distinct Copilot capabilities or usage modes: repository custom instructions, Copilot Chat, the Copilot coding agent/code-change workflow, and Copilot repository/code context.
 
 ## Scenario Responses
 
-**When Copilot generates code that appears correct:** I compare it with the current repository contracts and architecture before accepting it. I then run the relevant tests or import checks. Generated code is not considered complete merely because Copilot reports success.
+**Understanding a complex 600-line legacy service in an unfamiliar codebase before wiring a new service to it:** I would use Copilot Chat with repository/code context so Copilot can explain the existing service, dependencies, data flow, and contracts while referencing the actual code. I would still verify its explanation against the repository because stale or inferred context can be wrong.
 
-**When Copilot conflicts with the specification:** The written specification and assessment requirements take precedence. I use a corrective prompt containing the exact required terminology or contract and reject incompatible generated changes.
+**Generating consistent, standards-compliant request-validation middleware across 10 existing route handlers:** I would use repository custom instructions together with the Copilot coding agent/code-generation workflow. Custom instructions establish the shared validation and security rules, while the coding agent can apply the pattern consistently across multiple files.
 
-**When Copilot references stale or nonexistent code:** I constrain the next prompt to the current repository and provide exact filenames, model fields, or service signatures when necessary. I verify the resulting diff against the working tree.
+**Quickly verifying whether a JWT verification implementation correctly handles token expiry and signature tampering:** I would use Copilot Chat as a focused code-review aid, supplying the implementation and asking it to check expiry and signature validation paths specifically. I would then verify the behavior with executable security-focused tests rather than relying only on Copilot's review.
 
-**When runtime behavior disagrees with Copilot's prediction:** Runtime evidence wins. I provide the real error or failing test back to Copilot, make the smallest justified correction, and rerun the test.
+**Enforcing that all commits to main pass linting and test coverage thresholds automatically, with no human intervention:** I would use GitHub Actions rather than Copilot as the enforcement mechanism, with Copilot assisting in drafting or reviewing the workflow. Copilot can help create the configuration, but CI branch-protection checks—not an AI assistant—must provide automatic enforcement.
 
-**When a generated change has security or privacy implications:** I manually evaluate tenant isolation, authorization, logging, and data exposure. For actor IP, this resulted in retaining only the required audit value while preventing the raw address from appearing in validation errors or logs.
+**Reviewing a contractor's AI-generated service module for security vulnerabilities before it reaches staging:** I would use Copilot Chat/review with repository context and the project's custom instructions to check tenant isolation, authorization, data exposure, logging, validation, and architectural boundaries. I would treat the output as review input and independently verify every high-severity finding.
+
+**Ensuring Copilot follows multi-tenant data isolation rules consistently across all developers and sessions:** I would use `.github/copilot-instructions.md` with explicit repository-wide tenant-isolation rules. Because those instructions travel with the repository, they provide persistent guidance across developers and Copilot sessions, although generated code still requires review and tests.
 
 ## Observed Copilot Limitations
 
