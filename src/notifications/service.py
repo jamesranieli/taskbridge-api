@@ -34,7 +34,8 @@ class NotificationService:
     VALID_EVENT_TYPES = frozenset([
         "project.created",
         "project.status_updated",
-        "project.deleted"
+        "project.deleted",
+        "MILESTONE_REOPENED"
     ])
     MAX_MESSAGE_LENGTH = 500
     
@@ -59,7 +60,7 @@ class NotificationService:
         Args:
             tenant_id (int): Tenant ID for isolation
             recipient_user_ids (list): User IDs to receive notification
-            event_type (str): Event type (project.created, project.status_updated, project.deleted)
+            event_type (str): Event type (project.created, project.status_updated, project.deleted, MILESTONE_REOPENED)
             project_id (int): Project ID that triggered notification
             message (str): Human-readable summary (max 500 chars)
         
