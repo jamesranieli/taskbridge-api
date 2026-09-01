@@ -24,7 +24,6 @@ class ProjectService:
     - Multi-tenant isolation (tenant_id on all operations)
     - Team-based authorization (tenant_id + team_id)
     - Status transition rules
-    - Soft delete preservation
     """
     
     VALID_STATUSES = frozenset(["active", "archived", "inactive"])
@@ -63,6 +62,7 @@ class ProjectService:
         Raises:
             ProjectValidationError: If input validation fails
             ProjectDataError: If database operation fails
+            RepositoryError: If database query fails
         """
         # Validate input
         if not name or not name.strip():
@@ -91,15 +91,27 @@ class ProjectService:
                     description=description_stripped,
                     status="active"
                 )
-                logger.info(f"Project created: {project.id}")
+                logger.info(
+                    "Project created",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "team_id": team_id,
+                        "project_id": project.id,
+                        "name": name_stripped
+                    }
+                )
                 return project
         except (ProjectDataError, RepositoryError) as e:
-            logger.error(f"Failed to create project: {e}")
+            logger.error(
+                "Failed to create project",
+                extra={"tenant_id": tenant_id, "team_id": team_id, "name": name_stripped},
+                exc_info=e
+            )
             raise
     
     async def get_project(self, tenant_id: int, project_id: int) -> Project:
         """
-        Get a project by ID (tenant-scoped, no team verification).
+        Get a project by ID (tenant-scoped).
         
         Args:
             tenant_id: Tenant ID for isolation
@@ -109,91 +121,25 @@ class ProjectService:
             Project instance
         
         Raises:
-            ProjectNotFoundError: If project not found or deleted
+            ProjectNotFoundError: If project not found
+            RepositoryError: If database query fails
         """
         try:
             project = await self.repository.read_by_id(tenant_id, project_id)
             if not project:
                 raise ProjectNotFoundError("Project not found")
-            return project
-        except RepositoryError as e:
-            logger.error(f"Failed to retrieve project: {e}")
-            raise
-    
-    async def get_project_by_team(
-        self,
-        tenant_id: int,
-        team_id: int,
-        project_id: int
-    ) -> Project:
-        """
-        Get a project by ID with team-level authorization.
-        
-        Args:
-            tenant_id: Tenant ID for isolation
-            team_id: Team ID to verify ownership
-            project_id: Project ID to retrieve
-        
-        Returns:
-            Project instance
-        
-        Raises:
-            ProjectNotFoundError: If project not found, doesn't belong to team, or deleted
-        """
-        try:
-            project = await self.repository.read_by_id_and_team(
-                tenant_id, team_id, project_id
-            )
-            if not project:
-                raise ProjectNotFoundError("Project not found or access denied")
-            return project
-        except RepositoryError as e:
-            logger.error(f"Failed to retrieve project: {e}")
-            raise
-    
-    async def list_projects(
-        self,
-        tenant_id: int,
-        team_id: Optional[int] = None,
-        limit: int = 20,
-        offset: int = 0
-    ) -> tuple[list[Project], int]:
-        """
-        List projects for a tenant or team.
-        
-        Args:
-            tenant_id: Tenant ID for isolation
-            team_id: Optional team ID to filter by team
-            limit: Max results (1-1000)
-            offset: Results to skip
-        
-        Returns:
-            Tuple of (projects list, total count)
-        
-        Raises:
-            ValueError: If pagination params invalid
-            RepositoryError: If database query fails
-        """
-        if not (1 <= limit <= 1000):
-            raise ValueError("Limit must be between 1 and 1000")
-        if offset < 0:
-            raise ValueError("Offset must be non-negative")
-        
-        try:
-            if team_id:
-                projects = await self.repository.list_by_team(
-                    tenant_id, team_id, limit=limit, offset=offset
-                )
-                total = await self.repository.count_by_team(tenant_id, team_id)
-            else:
-                projects = await self.repository.list_by_tenant(
-                    tenant_id, limit=limit, offset=offset
-                )
-                total = await self.repository.count_by_tenant(tenant_id)
             
-            return projects, total
+            logger.debug(
+                "Retrieved project",
+                extra={"tenant_id": tenant_id, "project_id": project_id}
+            )
+            return project
         except RepositoryError as e:
-            logger.error(f"Failed to list projects: {e}")
+            logger.error(
+                "Failed to retrieve project",
+                extra={"tenant_id": tenant_id, "project_id": project_id},
+                exc_info=e
+            )
             raise
     
     async def update_project(
@@ -221,6 +167,7 @@ class ProjectService:
             ProjectNotFoundError: If project not found or doesn't belong to team
             ProjectValidationError: If input validation fails
             ProjectDataError: If database operation fails
+            RepositoryError: If database query fails
         """
         # Validate inputs if provided
         name_update = None
@@ -252,7 +199,14 @@ class ProjectService:
         
         # If no updates, return existing project
         if not update_data:
-            return await self.get_project_by_team(tenant_id, team_id, project_id)
+            logger.debug(
+                "No fields provided for update",
+                extra={"tenant_id": tenant_id, "team_id": team_id, "project_id": project_id}
+            )
+            project = await self.repository.read_by_id_and_team(tenant_id, team_id, project_id)
+            if not project:
+                raise ProjectNotFoundError("Project not found or access denied")
+            return project
         
         try:
             async with self.db.begin():
@@ -261,10 +215,23 @@ class ProjectService:
                 )
                 if not updated_project:
                     raise ProjectNotFoundError("Project not found or access denied")
-                logger.info(f"Project updated: {project_id}")
+                
+                logger.info(
+                    "Project updated",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "team_id": team_id,
+                        "project_id": project_id,
+                        "fields": list(update_data.keys())
+                    }
+                )
                 return updated_project
         except (ProjectDataError, RepositoryError) as e:
-            logger.error(f"Failed to update project: {e}")
+            logger.error(
+                "Failed to update project",
+                extra={"tenant_id": tenant_id, "team_id": team_id, "project_id": project_id},
+                exc_info=e
+            )
             raise
     
     async def update_status(
@@ -290,6 +257,7 @@ class ProjectService:
             ProjectNotFoundError: If project not found or doesn't belong to team
             InvalidProjectStatusError: If status invalid or transition not allowed
             ProjectDataError: If database operation fails
+            RepositoryError: If database query fails
         """
         # Validate status value
         if new_status not in self.VALID_STATUSES:
@@ -323,10 +291,23 @@ class ProjectService:
                 if not updated_project:
                     raise ProjectNotFoundError("Project not found or access denied")
                 
-                logger.info(f"Project status updated: {project_id} ({current_status} -> {new_status})")
+                logger.info(
+                    "Project status updated",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "team_id": team_id,
+                        "project_id": project_id,
+                        "old_status": current_status,
+                        "new_status": new_status
+                    }
+                )
                 return updated_project
         except (ProjectDataError, RepositoryError) as e:
-            logger.error(f"Failed to update project status: {e}")
+            logger.error(
+                "Failed to update project status",
+                extra={"tenant_id": tenant_id, "team_id": team_id, "project_id": project_id},
+                exc_info=e
+            )
             raise
     
     async def delete_project(
@@ -336,7 +317,7 @@ class ProjectService:
         project_id: int
     ) -> bool:
         """
-        Soft delete a project.
+        Delete a project.
         
         Args:
             tenant_id: Tenant ID for isolation
@@ -355,8 +336,20 @@ class ProjectService:
                 success = await self.repository.delete(tenant_id, team_id, project_id)
                 if not success:
                     raise ProjectNotFoundError("Project not found or access denied")
-                logger.info(f"Project deleted: {project_id}")
+                
+                logger.info(
+                    "Project deleted",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "team_id": team_id,
+                        "project_id": project_id
+                    }
+                )
                 return True
         except RepositoryError as e:
-            logger.error(f"Failed to delete project: {e}")
+            logger.error(
+                "Failed to delete project",
+                extra={"tenant_id": tenant_id, "team_id": team_id, "project_id": project_id},
+                exc_info=e
+            )
             raise
