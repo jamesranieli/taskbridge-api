@@ -12,3 +12,16 @@ Notifications are created equally for supplied project team recipients and can b
 Tenant IDs scope repository access to prevent cross-organisation data access.
 The service layer coordinates Project, Audit, and Notification writes within the same database transaction.
 This design favors explicit layers and simple contracts over additional abstractions that were unnecessary for the assessment.
+
+## Architecture and Flow Diagram
+
+```mermaid
+flowchart LR
+    Client --> Routes[FastAPI Routes]
+    Routes --> Services[Service Layer]
+    Services --> Repositories[Repository Layer]
+    Repositories --> Database[(Database)]
+    Services --> Audit[Audit Service]
+    Services --> Notifications[Notification Service]
+q
+```
