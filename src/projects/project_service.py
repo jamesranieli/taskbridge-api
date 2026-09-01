@@ -54,7 +54,8 @@ class ProjectService:
         name: str,
         actor_user_id: int,
         recipient_user_ids: List[int],
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        actor_ip: Optional[str] = None
     ) -> Project:
         """
         Create a new project with audit event and notifications.
@@ -66,6 +67,7 @@ class ProjectService:
             actor_user_id: User ID who triggered the creation
             recipient_user_ids: User IDs to receive "project.created" notification
             description: Optional description (max 10000 chars)
+            actor_ip: Optional IP address of actor
         
         Returns:
             Created Project instance
@@ -123,7 +125,8 @@ class ProjectService:
                     actor_user_id=actor_user_id,
                     actor_org_id=tenant_id,
                     before_state=None,
-                    after_state=after_state
+                    after_state=after_state,
+                    actor_ip=actor_ip
                 )
                 
                 # 3. Create Notifications for all recipients
@@ -146,7 +149,8 @@ class ProjectService:
                         "project_id": project.id,
                         "name": name_stripped,
                         "actor_user_id": actor_user_id,
-                        "recipient_count": len(recipient_user_ids)
+                        "recipient_count": len(recipient_user_ids),
+                        "ip_captured": actor_ip is not None
                     }
                 )
                 return project
@@ -290,7 +294,8 @@ class ProjectService:
         project_id: int,
         new_status: str,
         actor_user_id: int,
-        recipient_user_ids: List[int]
+        recipient_user_ids: List[int],
+        actor_ip: Optional[str] = None
     ) -> Project:
         """
         Update project status with state transition validation, audit event, and notifications.
@@ -302,6 +307,7 @@ class ProjectService:
             new_status: Target status (active, archived, or inactive)
             actor_user_id: User ID who triggered the status change
             recipient_user_ids: User IDs to receive "project.status_updated" notification
+            actor_ip: Optional IP address of actor
         
         Returns:
             Updated Project instance
@@ -375,7 +381,8 @@ class ProjectService:
                     actor_user_id=actor_user_id,
                     actor_org_id=tenant_id,
                     before_state=before_state,
-                    after_state=after_state
+                    after_state=after_state,
+                    actor_ip=actor_ip
                 )
                 
                 # 3. Create Notifications for all recipients
@@ -399,7 +406,8 @@ class ProjectService:
                         "old_status": current_status,
                         "new_status": new_status,
                         "actor_user_id": actor_user_id,
-                        "recipient_count": len(recipient_user_ids)
+                        "recipient_count": len(recipient_user_ids),
+                        "ip_captured": actor_ip is not None
                     }
                 )
                 return updated_project
@@ -417,7 +425,8 @@ class ProjectService:
         team_id: int,
         project_id: int,
         actor_user_id: int,
-        recipient_user_ids: List[int]
+        recipient_user_ids: List[int],
+        actor_ip: Optional[str] = None
     ) -> bool:
         """
         Delete a project with audit event and notifications.
@@ -428,6 +437,7 @@ class ProjectService:
             project_id: Project ID to delete
             actor_user_id: User ID who triggered the deletion
             recipient_user_ids: User IDs to receive "project.deleted" notification
+            actor_ip: Optional IP address of actor
         
         Returns:
             True if deletion succeeded
@@ -471,7 +481,8 @@ class ProjectService:
                     actor_user_id=actor_user_id,
                     actor_org_id=tenant_id,
                     before_state=before_state,
-                    after_state=None
+                    after_state=None,
+                    actor_ip=actor_ip
                 )
                 
                 # 3. Create Notifications for all recipients
@@ -493,7 +504,8 @@ class ProjectService:
                         "team_id": team_id,
                         "project_id": project_id,
                         "actor_user_id": actor_user_id,
-                        "recipient_count": len(recipient_user_ids)
+                        "recipient_count": len(recipient_user_ids),
+                        "ip_captured": actor_ip is not None
                     }
                 )
                 return True
