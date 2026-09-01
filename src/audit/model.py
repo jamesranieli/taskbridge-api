@@ -17,11 +17,12 @@ class Audit(Base):
     Attributes:
         id (str): UUID primary key
         tenant_id (int): Tenant (organization) ID for isolation
-        event_type (str): Mutation type (project.created, project.status_updated, project.deleted)
+        event_type (str): Mutation type (project.created, project.status_updated, project.deleted, MILESTONE_REOPENED)
         entity_type (str): Entity mutated (currently: project)
         entity_id (int): Project ID that was mutated (indexed)
         actor_user_id (int): User ID who triggered the mutation
         actor_org_id (int): Organization ID of actor (must equal tenant_id)
+        actor_ip (str): Optional IP address of actor (nullable)
         before_state (dict): Previous state (null for create, full project dict for update/delete)
         after_state (dict): New state (full project dict, null for delete)
         timestamp (datetime): UTC timestamp of mutation (immutable, indexed)
@@ -43,6 +44,7 @@ class Audit(Base):
     # Actor information
     actor_user_id = Column(Integer, nullable=False)
     actor_org_id = Column(Integer, nullable=False)
+    actor_ip = Column(String(45), nullable=True)
     
     # State snapshots (JSON for flexibility)
     before_state = Column(JSON, nullable=True)
